@@ -362,6 +362,80 @@ describe("where a classic bag opens", function()
       assert.is_true(rect(bag).top > SCREEN_HEIGHT, "not pulled back after a reload either")
     end)
 
+    -- Less than 32 units of the bag inside the screen, on either axis, is not a grab. The next time the bag
+    -- is shown, that place goes to the center and is saved. A drop that only hangs past one edge stays.
+    it("centers a bag dropped where none of it can be grabbed, once it is shown again, and saves that place", function()
+      local addon = start()
+      local bag = addon.Bags.Backpack
+      holding(bag, 200)
+      bag:Show(ctxOf(addon))
+      drag(bag, 2400, 2000)
+      local dropped = rect(bag)
+      assert.is_true(dropped.left > SCREEN_WIDTH and dropped.bottom > SCREEN_HEIGHT, "nothing of it on the screen")
+      local saved = copy(addon:GetModule("Database"):GetBagPosition(BACKPACK))
+      assert.is_true(saved.offScreen)
+
+      addon = start({ [BACKPACK] = saved })
+      bag = addon.Bags.Backpack
+      holding(bag, 200)
+      bag:Show(ctxOf(addon))
+      local r = rect(bag)
+      assert.is_true(math.abs((r.left + r.right) / 2 - SCREEN_WIDTH / 2) < 1, "centered across")
+      assert.is_true(math.abs((r.bottom + r.top) / 2 - SCREEN_HEIGHT / 2) < 1, "centered down")
+      local again = addon:GetModule("Database"):GetBagPosition(BACKPACK)
+      assert.is_nil(again.offScreen)
+      assert.are.equal("CENTER", again.point)
+    end)
+
+    it("centers an open bag when the screen changes and leaves nothing of it to grab, and saves that place", function()
+      local addon = start()
+      local bag = addon.Bags.Backpack
+      holding(bag, 200)
+      bag:Show(ctxOf(addon))
+      drag(bag, 1200, 400)
+      assert.is_true(rect(bag).right <= SCREEN_WIDTH + 0.01, "on the wide screen")
+      UIParent:_SetRect(0, 0, 700, 500)
+      addon:GetModule("Events")._eventMap["DISPLAY_SIZE_CHANGED"].fn("DISPLAY_SIZE_CHANGED")
+      local r = rect(bag)
+      assert.is_true(math.abs((r.left + r.right) / 2 - 350) < 2, "centered across the smaller screen")
+      assert.is_true(math.abs((r.bottom + r.top) / 2 - 250) < 2, "centered down")
+      assert.is_nil(addon:GetModule("Database"):GetBagPosition(BACKPACK).offScreen)
+    end)
+
+    -- The 32 units are on the screen, not in the bag's own units: at half scale 20 screen units are
+    -- 40 of the bag's, and at double scale 40 screen units are 20 of the bag's.
+    it("judges what is left to grab in screen units, at half scale and at double scale", function()
+      local function at(percent)
+        return function(defaults, const)
+          for _, view in pairs(defaults.size) do
+            view[const.BAG_KIND.BACKPACK].scale = percent
+          end
+        end
+      end
+      local function again(percent, visible)
+        local addon = start(nil, { profile = at(percent) })
+        local bag = addon.Bags.Backpack
+        holding(bag, 200)
+        bag:Show(ctxOf(addon))
+        local wide = rect(bag)
+        drag(bag, SCREEN_WIDTH - visible + (wide.right - wide.left), wide.top)
+        local dropped = rect(bag)
+        assert.is_true(math.abs(SCREEN_WIDTH - dropped.left - visible) < 1,
+          string.format("%d%%: %.1f units on the screen", percent, SCREEN_WIDTH - dropped.left))
+        local saved = copy(addon:GetModule("Database"):GetBagPosition(BACKPACK))
+        addon = start({ [BACKPACK] = saved }, { profile = at(percent) })
+        bag = addon.Bags.Backpack
+        holding(bag, 200)
+        bag:Show(ctxOf(addon))
+        return rect(bag)
+      end
+      local half = again(50, 20)
+      assert.is_true(math.abs((half.left + half.right) / 2 - SCREEN_WIDTH / 2) < 2, "20 screen units at half scale: centered")
+      local double = again(200, 40)
+      assert.is_true(SCREEN_WIDTH - double.left > 32, "40 screen units at double scale: still a grab")
+      assert.is_true(double.right > SCREEN_WIDTH - 1, "it stays at the edge")
+    end)
+
     it("fits the screen again once it is dropped on it", function()
       local addon = start()
       local bag = addon.Bags.Backpack

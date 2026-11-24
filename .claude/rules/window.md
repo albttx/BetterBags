@@ -134,6 +134,20 @@ touch the clamp.
   the grip or of a drag (before the position is saved), and on the screen events above.
 - **Never during a resize.** While the player holds the grip (`sizing`), `KeepOnScreen` and
   `FitToScreen` do nothing: moving or resizing a window the engine is sizing fights the drag.
+- **Nothing left to grab.** A saved position that leaves less than 32 units of the frame inside
+  the screen on either axis, or none of it (`grabReachable`, `GRAB`), is put at the center of its
+  parent (`Reclaim`) when the window is shown (`Show`, after the render and before the frame shows)
+  and when the screen changes (`UI_SCALE_CHANGED`, `DISPLAY_SIZE_CHANGED`, in the same handler as
+  `FitToScreen`, before the invalidate). The 32 units are screen units: `GetLeft` is in the frame's
+  own units, so the rect is multiplied by the frame's effective scale over UIParent's before the
+  check (at half scale, 20 on the screen is 40 of the frame's, and that is not a grab). The corrected
+  place is saved (`SavePosition`; `offScreen` clears, the frame is on the screen). `OnMoved` runs
+  first, so a bag records the new bottom left (`KeepPlace`) before the save. A frame that still has
+  that much of itself on the screen stays, including one a drag left hanging past an edge. A clamped
+  window stays. A frame whose first anchor is not its parent stays on that anchor (a classic bag on
+  its anchor). It does nothing while the frame is moving or being sized, and nothing for a frame that
+  has no area yet. Half a unit of slack on the overlap matches `IsOnScreen`, so a strip that reads
+  31.6 from float error still counts as a grab.
 - **Diagnostics.** While a profiler capture runs, each step of a resize or a move (`resize
   start`, `resize started`, `resizing`, `rendered while resizing`, `resize stop`, `resize
   stopped`, `on screen`, `position saved`, `move start`, `move stopped`) calls
@@ -300,6 +314,8 @@ could hide). Going off the screen is new with v0.8.10, when the clamp came off b
   reload. A drop back on the screen ends that. Saves from before this have no mark, and fit: until v0.8.10 no bag
   could be off the top or the left.
 - **After a reload it goes back to where it was dropped**, not to where it had grown to since: the save is the drop.
+  A drop that leaves nothing of the bag to grab (§3a, `Reclaim`) is the exception: the next show puts it at the
+  center and saves that place. A drop that only hangs past an edge stays.
 
 Bags the player sizes, and bags with their anchor on, are placed as before. BetterBags Next keeps its own places
 (next-small-mode.md §14c): measured, its small panels come back where they were dropped at any Bag Scale.
@@ -307,11 +323,12 @@ Bags the player sizes, and bags with their anchor on, are placed as before. Bett
 Coverage: `spec/integration/bag_position_spec.lua` (on the whole addon, on a screen: after a reload, by each
 point LibWindow-1.1 saves, at a scale, a real player's save, nothing saved, opened before the first read, holding
 more than when dropped; while open: closed and opened again, growing upward, stopping at the top and coming back,
-stopping at the right, a smaller screen; dropped off the screen: staying there, across a reload, until dropped back;
+stopping at the right, a smaller screen; dropped off the screen: a partial hang staying there, across a reload, until
+dropped back; nothing left to grab centered on the next show and when the screen changes, and saved;
 the setting turned on and off again; the bank: its top as its tabs read in on every visit, the next visit holding
 something else, the backpack left alone, back where it was dropped, its bottom kept once loaded, fitted once loaded,
 dropped while loading, the real event; an anchor from the start of an open, a bag the player sized, Drag to Resize going
-off), `spec/window/window_spec.lua` ("its place on the screen"), `spec/refresh_spec.lua` ("telling the bags when an
+off), `spec/window/window_spec.lua` ("its place on the screen", "with nothing left to grab"), `spec/refresh_spec.lua` ("telling the bags when an
 open starts and when its reads are done"). 29 mutations, each caught; three first survived and led to tests (what
 was kept forgotten on the next visit, an anchor while the bank opens, the backpack as the bank opens).
 
