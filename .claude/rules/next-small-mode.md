@@ -88,12 +88,24 @@ end of a switch. `BuildPanel` only makes the parts.
     frame is clamped (`ApplyClamp`, from `ApplyGeometry`) and its place kept on the screen (`clampPlace`:
     a move, a resize, a snap, a reset glide, a chained spot, the screen changing, opening) only while it is
     on. Off, the place is only put on whole pixels, so a panel goes where the player puts it, off the
-    screen too. A full panel is never clamped. `bags/ClampChanged` (registered by the chain with its screen
+    screen too, and that drop is what is saved. A place that then leaves less than 32 units of the panel
+    inside the screen on either axis, or none of it, is put at the center when the panel is shown or the
+    screen changes, and the corner is saved (`FitSmall`, `placeReachable`, `centerPlace`): a saved place
+    from a wider screen, or a drop with nothing left to grab, on the next open. A place that still has a
+    part to grab stays on its corner. A panel the chain places beside an anchor is not centered on its
+    own (the anchor is fitted first, `chain:Update`). A companion placed beside a closed anchor keeps that
+    spot, including when the spot has nothing to grab: the companion's corner is not what places it.
+    Opening the anchor centers the anchor when its own place has nothing to grab, and the next chain
+    update places the companion beside the anchor. Not while the panel is being dragged, by its title
+    (`moving`) or by its anchor square (`anchorDragging`). A full panel is never clamped. The 32 units
+    are screen units. Half a unit of slack on the overlap matches the classic windows' `IsOnScreen`, so
+    a strip that reads 31.6 from float error still counts as a grab. `bags/ClampChanged` (registered by the chain with its screen
     events, in BetterBags Next's scope): `chain:ClampChanged` applies every panel's clamp; turned on, each
     open small panel is fitted again (`FitSmall`: a chained one beside where its anchor is put back, which
     `LivePlace` reads already clamped) and its place saved, so turning it off again moves nothing. A closed
     one is put back as it opens. Coverage: `spec/next/small_spec.lua` ("with Clamp Bags to Screen": moved off
-    the screen on whole pixels, opening off it, a screen change, turning it on (saved; a closed one as it
+    the screen on whole pixels, a place with nothing left to grab centered and saved on show and on a screen
+    change, a place that can still be grabbed left on its corner, a screen change that keeps the corner, turning it on (saved; a closed one as it
     opens), turning it off (nothing moves, also a panel the screen's edge put back), a chained bag beside its
     anchor, a full panel untouched).
   - **Its tabs stay on the screen with it** (#1248, reported from Discord: dragged or placed near the screen's
@@ -184,7 +196,8 @@ end of a switch. `BuildPanel` only makes the parts.
   - Nothing in the panels is protected (`BankPanelPurchaseButtonScriptTemplate` is not), so moving
     works in combat (`StartMoving` is blocked only on protected frames).
 - **The screen changing** (`UI_SCALE_CHANGED`, `DISPLAY_SIZE_CHANGED`, `chain:Update` with snap)
-  refits an open small panel and lays its content out again; a closed one refits when it opens.
+  refits an open small panel and lays its content out again; a closed one refits when it opens. A refit
+  whose place leaves nothing to grab centers the panel and saves the corner (`FitSmall`, above).
 - **The full chain** (next-chain.md §12) leaves small panels alone: never paired (`Pair`), never placed by the full
   layouts (`Update`), never sent through a partner's edge (`ShownAnchorOf`); a small panel's title's
   click does nothing (`Click` returns `"small"`) and its tooltip says to drag it. Small panels chain

@@ -2892,11 +2892,59 @@ function panelProto:tabsLater()
   })
 end
 
+-- GRAB is how much of a small panel must lie inside the screen, on both axes, before the panel can
+-- be grabbed. Less than this on either axis, or none of it, is not a place the panel can be taken from.
+local GRAB = 32
+
+-- grabReachable says a rect of left, bottom, right, top has a grabbable part inside a screen of
+-- screenW by screenH: at least GRAB units on both axes, or the whole panel when it is smaller than
+-- that. A panel with no area is not judged.
+---@param left number
+---@param bottom number
+---@param right number
+---@param top number
+---@param screenW number
+---@param screenH number
+---@return boolean
+local function grabReachable(left, bottom, right, top, screenW, screenH)
+  local width, height = right - left, top - bottom
+  if width <= 0 or height <= 0 then
+    return true
+  end
+  local overlapW = math.min(right, screenW) - math.max(left, 0)
+  local overlapH = math.min(top, screenH) - math.max(bottom, 0)
+  if overlapW <= 0 or overlapH <= 0 then
+    return false
+  end
+  return overlapW + 0.5 >= math.min(GRAB, width) and overlapH + 0.5 >= math.min(GRAB, height)
+end
+
+-- placeReachable says a small panel whose top left is x, y on the screen, at its size now, has a
+-- grabbable part inside the screen (grabReachable).
+---@param x number
+---@param y number
+---@return boolean
+function panelProto:placeReachable(x, y)
+  local s = self:Scale()
+  local w, h = self:SmallWidth() * s, self:SmallHeight() * s
+  return grabReachable(x, y - h, x + w, y, UIParent:GetWidth(), UIParent:GetHeight())
+end
+
+-- centerPlace saves a small panel's place at the center of the screen: its top left there, through
+-- the same snap its other places take (clampPlace), as the corner it holds (SavePlace).
+function panelProto:centerPlace()
+  local s = self:Scale()
+  local w, h = self:SmallWidth() * s, self:SmallHeight() * s
+  local x, y = self:clampPlace((UIParent:GetWidth() - w) / 2, (UIParent:GetHeight() + h) / 2)
+  self:SavePlace(x, y)
+end
+
 -- FitSmall sizes a small panel for the screen as it is now and puts it at its place, kept on the
 -- screen: on opening (the screen may have changed while it was closed, and what it shows), when the screen
 -- changes, and as Fit Names While Open or Autosize Bags is turned on or off. Its content is laid out again when its size,
 -- or the width it lays out for, changed; autosized, at once for a new width first, so it takes the height of what it shows
--- there. A size glide running ends first (ApplyGeometry).
+-- there. A size glide running ends first (ApplyGeometry). A place with nothing left to grab (placeReachable),
+-- for a panel the chain does not place beside an anchor, goes to the center and that corner is saved (centerPlace).
 function panelProto:FitSmall()
   self:endSizeGlide()
   self:takeScale()
@@ -2913,6 +2961,15 @@ function panelProto:FitSmall()
   self.frame:SetSize(width, height)
   self:adoptPlace()
   self.placeX, self.placeY = self:SmallPlace()
+  -- A chain places this panel beside its anchor (SmallPlace). That anchor is fitted first (chain:Update),
+  -- so a pair comes back with the anchor. A panel placed from its own corner, with nothing left to grab,
+  -- goes to the center. Not while a drag has it, by its title or by its anchor square (the drop saves
+  -- where it was let go).
+  if not self.moving and not self.anchorDragging and chain:SmallAnchorOf(self) == nil
+    and not self:placeReachable(self.placeX, self.placeY) then
+    self:centerPlace()
+    self.placeX, self.placeY = self:SmallPlace()
+  end
   self.spotMoved = nil
   self:setOffset(self.offset)
   self:FitTitle()

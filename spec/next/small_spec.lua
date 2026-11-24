@@ -959,17 +959,67 @@ describe("BetterBags Next's small mode", function()
       assert.are.same({ 1900, 1500 }, { topLeft(bag) })
     end)
 
-    it("opens where it was left, off the screen too", function()
-      db.places[BANK] = { -500, 5000 }
-      local bank = opened(function(c) return nextBank:Create(c) end)
-      assert.are.same({ -500, 5000 }, { topLeft(bank) })
+    -- A place with nothing left to grab is centered when the bag is shown (the describe below). A drag
+    -- still leaves the bag where it was dropped, including off the screen (the test above).
+
+    -- A saved place from a larger screen (an ultrawide) can sit entirely outside a smaller one. Less than 32
+    -- units of the frame inside the screen, on either axis, is not enough to grab the frame. That place is
+    -- put at the center when the bag is shown and when the screen changes, and the corner is saved there.
+    -- A place that still has a part to grab is left where it is, including one the player dropped off the
+    -- screen on this screen (the drag above).
+    describe("a place with nothing left to grab", function()
+      local function atCenter(panel)
+        local x, y = topLeft(panel)
+        local s = panel.frame:GetScale()
+        local cx = (x + panel.frame:GetWidth() / 2) * s
+        local cy = (y - panel.frame:GetHeight() / 2) * s
+        return math.abs(cx - UIParent:GetWidth() / 2) < 1 and math.abs(cy - UIParent:GetHeight() / 2) < 1
+      end
+
+      it("centers the bag when it is shown, and saves that place", function()
+        db.places[BACKPACK] = { 4000, 5000 }
+        local bag = opened(function(c) return nextBag:Create(c) end)
+        assert.is_true(atCenter(bag), "shown at the center")
+        assert.is_nil(db.places[BACKPACK])
+        local corner = db.corners[BACKPACK]
+        assert.is_not_nil(corner)
+        assert.is_true(corner[1] > 0 and corner[1] < UIParent:GetWidth(), "the saved corner is on this screen")
+        bag:Hide(ctx())
+        finishTweens()
+        bag:Show(ctx())
+        finishTweens()
+        assert.is_true(atCenter(bag), "the saved center is where it opens next")
+      end)
+
+      it("centers an open bag when the screen changes and leaves nothing to grab, and saves that place", function()
+        db.places[BACKPACK] = { 1400, 1000 }
+        local bag = opened(function(c) return nextBag:Create(c) end)
+        local x = topLeft(bag)
+        assert.is_true(x >= 0 and x < UIParent:GetWidth(), "on the wide screen")
+        UIParent:_SetRect(0, 0, 640, 480)
+        chain:Update(ctx(), true)
+        assert.is_true(atCenter(bag), "centered on the smaller screen")
+        assert.is_true(db.corners[BACKPACK][1] > 0 and db.corners[BACKPACK][1] < UIParent:GetWidth())
+        assert.are.equal(math.floor(480 * style.Small.Height), bag.frame:GetHeight())
+      end)
+
+      it("leaves a bag that still has a part to grab where it was, on a screen change too", function()
+        db.places[BACKPACK] = { 80, 1000 }
+        local bag = opened(function(c) return nextBag:Create(c) end)
+        local before = topLeft(bag)
+        UIParent:_SetRect(0, 0, 1280, 720)
+        chain:Update(ctx(), true)
+        assert.are.equal(before, topLeft(bag))
+        assert.is_false(atCenter(bag))
+      end)
     end)
 
     -- It holds its bottom right (docs/next-bag-anchor.md): the corner stays, the new height grows up from it.
     it("stays where it is when the screen changes, its height the new screen's share over the corner it holds", function()
-      db.places[BACKPACK] = { 1400, 1100 }
+      -- 900 still has a part to grab on the smaller screen. A place that does not is centered (below).
+      db.places[BACKPACK] = { 900, 1100 }
       local bag = opened(function(c) return nextBag:Create(c) end)
-      local corner = cornerFor(bag, 1400, 1100)
+      local corner = cornerFor(bag, 900, 1100)
       assert.are.same(corner, db.corners[BACKPACK])
       UIParent:_SetRect(0, 0, 1280, 720)
       chain:Update(ctx(), true)
@@ -1025,17 +1075,20 @@ describe("BetterBags Next's small mode", function()
 
     it("puts a chained bag back beside its anchor, where the anchor was put back", function()
       db.smallChain = "companion"
-      db.places[BANK] = { -500, 900 }
       local bank = opened(function(c) return nextBank:Create(c) end)
       local bag = opened(function(c) return nextBag:Create(c) end)
       assert.are.equal(bank, chain:SmallAnchorOf(bag), "chained beside the bank")
+      -- Dropped off the screen while open: the drop is kept (a show would center a place with nothing to grab).
+      drag(bank, -500, 900)
+      assert.are.same({ -500, 900 }, { topLeft(bank) })
       turned(true)
       assert.are.same({ 0, 900 }, { topLeft(bank) })
       local x, y = chain:ChainedPlace(bag, bank, 0, 900)
       local beside = { pixel:Snap(UIParent, x), pixel:Snap(UIParent, y) }
       assert.are.same(beside, { topLeft(bag) })
-      -- Each saved on the side it held (a backpack never placed holds its own, the right).
-      assert.are.same(cornerFor(bag, beside[1], beside[2], "RIGHT"), db.corners[BACKPACK])
+      -- The drop beside the bank, off the left of the screen, saved the backpack on that half. Clamp
+      -- keeps the side it held.
+      assert.are.same(cornerFor(bag, beside[1], beside[2], "LEFT"), db.corners[BACKPACK])
       assert.are.same(cornerFor(bank, 0, 900, "LEFT"), db.corners[BANK])
     end)
 
@@ -7609,6 +7662,22 @@ describe("BetterBags Next's small mode", function()
     end)
 
     -- The classic anchor's drag: the bag's corner pinned to the square's same corner, the side its half of the screen.
+    it("does not center the bag when the screen changes while its square is being dragged", function()
+      db.clamp = false
+      local bag = opened(function(c) return nextBag:Create(c) end)
+      click(bag)
+      local square = bag.anchorSquare
+      square:GetScript("OnDragStart")(square, "LeftButton")
+      dragSquare(bag, -800, 200)
+      local corner = db.corners[BACKPACK]
+      local during = { corner[1], corner[2], corner[3], corner[4] }
+      UIParent:_SetRect(0, 0, 1280, 720)
+      chain:Update(ctx(), true)
+      assert.is_true(bag.anchorDragging)
+      assert.are.same(during, db.corners[BACKPACK])
+      square:GetScript("OnDragStop")(square)
+    end)
+
     it("moves the bag with its square, the bag's corner on the square's, the side following the half of the screen it is on",
       function()
       local bag = opened(function(c) return nextBag:Create(c) end)

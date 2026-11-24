@@ -154,10 +154,11 @@ function window:Init()
   ---@class Events: AceModule
   local events = addon:GetModule('Events')
   for _, event in ipairs({ "UI_SCALE_CHANGED", "DISPLAY_SIZE_CHANGED" }) do
-    events:RegisterEvent(event, function()
+    events:RegisterEvent(event, function(ctx)
       for w in pairs(self.windows) do
         w:FitToScreen()
         w:KeepOnScreen()
+        w:Reclaim(ctx)
         w:Invalidate()
       end
     end)
@@ -355,6 +356,69 @@ function windowProto:RestorePosition()
   if self.opts.Scale ~= nil then
     self.frame:SetScale(self.opts.Scale())
   end
+end
+
+-- GRAB is how much of a frame must lie inside the screen, on both axes, before the frame can be
+-- grabbed. Less than this on either axis, or none of it, is not a place the frame can be taken from.
+local GRAB = 32
+
+-- grabReachable says a rect of left, bottom, right, top has a grabbable part inside a screen of
+-- screenW by screenH: at least GRAB units on both axes, or the whole frame when the frame is smaller
+-- than that. A frame with no area is not judged (it has not been laid out).
+---@param left number
+---@param bottom number
+---@param right number
+---@param top number
+---@param screenW number
+---@param screenH number
+---@return boolean
+local function grabReachable(left, bottom, right, top, screenW, screenH)
+  local width, height = right - left, top - bottom
+  if width <= 0 or height <= 0 then
+    return true
+  end
+  local overlapW = math.min(right, screenW) - math.max(left, 0)
+  local overlapH = math.min(top, screenH) - math.max(bottom, 0)
+  if overlapW <= 0 or overlapH <= 0 then
+    return false
+  end
+  return overlapW + 0.5 >= math.min(GRAB, width) and overlapH + 0.5 >= math.min(GRAB, height)
+end
+
+-- Reclaim puts a saved position that leaves nothing of the window to grab (grabReachable) at the
+-- center of its parent, and saves that place. A frame that still has a part to grab stays where it
+-- is, including one a drag left partly off the screen. A clamped window stays (the client keeps it
+-- on the screen). A frame anchored to something other than its parent stays on that anchor. It
+-- waits while the frame is moving or being sized. OnMoved runs so the owner records the new place
+-- (a bag's kept corner) before the position is saved.
+---@param ctx Context
+function windowProto:Reclaim(ctx)
+  if self.opts.Position == nil or self.moving or self.sizing or self:Clamped() then
+    return
+  end
+  local frame = self.frame
+  local _, relativeTo = frame:GetPoint(1)
+  local parent = frame:GetParent()
+  if relativeTo ~= nil and relativeTo ~= parent and relativeTo ~= UIParent then
+    return
+  end
+  local left, bottom, right, top = frame:GetLeft(), frame:GetBottom(), frame:GetRight(), frame:GetTop()
+  if left == nil or bottom == nil or right == nil or top == nil then
+    return
+  end
+  -- GetLeft is in the frame's own units. GRAB is screen units (UIParent), the same units a Next
+  -- panel uses: at half scale 20 on the screen is 40 of the frame's, and that is not a grab.
+  local toScreen = frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
+  if grabReachable(left * toScreen, bottom * toScreen, right * toScreen, top * toScreen,
+    UIParent:GetWidth(), UIParent:GetHeight()) then
+    return
+  end
+  frame:ClearAllPoints()
+  frame:SetPoint("CENTER", parent or UIParent, "CENTER", 0, 0)
+  if self.opts.OnMoved ~= nil then
+    self.opts.OnMoved(ctx)
+  end
+  self:SavePosition()
 end
 
 -- IsOnScreen says the whole window is on the screen, within half a unit.
@@ -658,6 +722,9 @@ function windowProto:Show(ctx, callback)
     self.hideAnimation:Stop()
   end
   local rendered = self:renderIfWaiting(ctx)
+  -- After the render, so the frame has the size it shows at. Before it is shown, so the first
+  -- frame is the corrected place.
+  self:Reclaim(ctx)
   local show = self.showAnimation
   if self:fades() and show ~= nil then
     show:Stop()

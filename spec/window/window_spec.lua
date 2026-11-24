@@ -426,6 +426,85 @@ describe("Window", function()
         assert.are.same({ 900, 700 }, { w:Fit(900, 700) })
       end)
 
+      -- Less than 32 units of the frame inside the screen, on either axis, is not enough to grab it.
+      -- Shown, or when the screen changes, that place goes to the center and is saved. A place that
+      -- still has a part to grab is left where it is. A clamped window is the client's to keep on
+      -- the screen. A frame anchored to something other than its parent is left on that anchor.
+      describe("with nothing left to grab", function()
+        local function showOff(left, bottom, width, height, opts)
+          opts = opts or {}
+          local moved = 0
+          local w = window:Create({
+            Name = name(), Kind = "Bag", Position = opts.position or {}, Fade = function() return false end,
+            Clamp = function() return opts.clamp == true end,
+            OnMoved = function(c) assert.is_not_nil(c) moved = moved + 1 end,
+          })
+          w.frame:_SetRect(left, bottom, width, height)
+          return w, function() return moved end
+        end
+
+        it("puts the frame at the center when it is shown, and saves that place", function()
+          local w, moved = showOff(5000, 5000, 200, 300)
+          w:Show(ctx())
+          assert.are.same({ "CENTER", UIParent, "CENTER", 0, 0 }, { w.frame:GetPoint(1) })
+          assert.are.equal(1, saved[w.frame])
+          assert.are.equal(1, moved())
+        end)
+
+        it("leaves a frame that still has a part to grab where it is", function()
+          local w = showOff(920, 100, 200, 200)
+          w:Show(ctx())
+          assert.is_nil(saved[w.frame])
+          assert.are_not.equal("CENTER", (w.frame:GetPoint(1)))
+        end)
+
+        it("puts a sliver of the frame at the center: 20 units on the screen is not enough to grab", function()
+          local w = showOff(980, 100, 200, 200)
+          w:Show(ctx())
+          assert.are.same({ "CENTER", UIParent, "CENTER", 0, 0 }, { w.frame:GetPoint(1) })
+          assert.are.equal(1, saved[w.frame])
+        end)
+
+        it("leaves a clamped frame where it is", function()
+          local w = showOff(5000, 5000, 200, 300, { clamp = true })
+          w:Show(ctx())
+          assert.is_nil(saved[w.frame])
+          assert.are_not.equal("CENTER", (w.frame:GetPoint(1)))
+        end)
+
+        it("leaves a frame anchored to another frame on that anchor", function()
+          local w = showOff(5000, 5000, 200, 300)
+          local other = CreateFrame("Frame")
+          w.frame:ClearAllPoints()
+          w.frame:SetPoint("TOPLEFT", other, "TOPLEFT", 0, 0)
+          w:Show(ctx())
+          assert.are.equal(other, select(2, w.frame:GetPoint(1)))
+          assert.is_nil(saved[w.frame])
+        end)
+
+        it("puts the frame at the center when the screen changes, and saves that place", function()
+          local current = addon:GetModule("Events")
+          current:Init()
+          window:Init()
+          local w = showOff(5000, 5000, 200, 300)
+          current._eventMap["DISPLAY_SIZE_CHANGED"].fn("DISPLAY_SIZE_CHANGED")
+          assert.are.same({ "CENTER", UIParent, "CENTER", 0, 0 }, { w.frame:GetPoint(1) })
+          assert.are.equal(1, saved[w.frame])
+        end)
+
+        it("does not move a frame while it is being dragged", function()
+          local current = addon:GetModule("Events")
+          current:Init()
+          window:Init()
+          local w = showOff(100, 100, 200, 200)
+          w.frame:GetScript("OnDragStart")(w.frame, "LeftButton")
+          w.frame:_SetRect(5000, 5000, 200, 200)
+          current._eventMap["DISPLAY_SIZE_CHANGED"].fn("DISPLAY_SIZE_CHANGED")
+          assert.is_nil(saved[w.frame])
+          assert.are_not.equal("CENTER", (w.frame:GetPoint(1)))
+        end)
+      end)
+
       it("goes back to its saved position at the scale its owner draws it at", function()
         local w = placed(0, 0, 200, 300, { scale = function() return 0.8 end })
         restored[w.frame] = nil
